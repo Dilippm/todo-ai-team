@@ -3,7 +3,7 @@ const request = require('supertest');
 const Todo = require('../src/models/Todo');
 const app = require('../src/app');
 const id = '507f1f77bcf86cd799439011';
-const todo = { _id: id, title: 'Write tests', description: '', completed: false };
+const todo = { _id: id, title: 'Write tests', description: '', completed: false, priority: 'medium' };
 beforeEach(() => jest.clearAllMocks());
 describe('Todo API', () => {
   test('POST /api/todos creates a todo', async () => {
@@ -17,17 +17,41 @@ describe('Todo API', () => {
     expect(response.status).toBe(400);
     expect(Todo.create).not.toHaveBeenCalled();
   });
-  test('GET /api/todos returns todos', async () => {
+  test.each(['low', 'medium', 'high'])('POST accepts %s priority', async (priority) => {
+    Todo.create.mockResolvedValue({ ...todo, priority });
+    const response = await request(app).post('/api/todos').send({ title: 'Priority task', priority });
+    expect(response.status).toBe(201);
+    expect(response.body.priority).toBe(priority);
+    expect(Todo.create).toHaveBeenCalledWith({ title: 'Priority task', priority });
+  });
+  test('POST rejects invalid priority', async () => {
+    const response = await request(app).post('/api/todos').send({ title: 'Priority task', priority: 'urgent' });
+    expect(response.status).toBe(400);
+    expect(Todo.create).not.toHaveBeenCalled();
+  });
+  test('GET /api/todos returns todos with priority', async () => {
     Todo.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([todo]) });
     const response = await request(app).get('/api/todos');
     expect(response.status).toBe(200);
     expect(response.body).toEqual([todo]);
   });
-  test('GET /api/todos/:id returns a todo', async () => {
+  test('GET /api/todos includes default priority for existing records without it', async () => {
+    Todo.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([{ _id: id, title: 'Legacy task', description: '', completed: false }] ) });
+    const response = await request(app).get('/api/todos');
+    expect(response.status).toBe(200);
+    expect(response.body[0].priority).toBe('medium');
+  });
+  test('GET /api/todos/:id returns a todo with priority', async () => {
     Todo.findById.mockResolvedValue(todo);
     const response = await request(app).get(`/api/todos/${id}`);
     expect(response.status).toBe(200);
     expect(response.body).toEqual(todo);
+  });
+  test('GET /api/todos/:id includes default priority for an existing legacy todo', async () => {
+    Todo.findById.mockResolvedValue({ _id: id, title: 'Legacy task', description: '', completed: false });
+    const response = await request(app).get(`/api/todos/${id}`);
+    expect(response.status).toBe(200);
+    expect(response.body.priority).toBe('medium');
   });
   test('rejects malformed ids and reports missing todos', async () => {
     const invalid = await request(app).get('/api/todos/not-an-id');
@@ -36,7 +60,19 @@ describe('Todo API', () => {
     const missing = await request(app).get(`/api/todos/${id}`);
     expect(missing.status).toBe(404);
   });
-  test('PUT /api/todos/:id updates a todo and validates fields', async () => {
+  test('PUT /api/todos/:id updates priority', async () => {
+    Todo.findByIdAndUpdate.mockResolvedValue({ ...todo, priority: 'high' });
+    const response = await request(app).put(`/api/todos/${id}`).send({ priority: 'high' });
+    expect(response.status).toBe(200);
+    expect(response.body.priority).toBe('high');
+    expect(Todo.findByIdAndUpdate).toHaveBeenCalledWith(id, { priority: 'high' }, { new: true, runValidators: true });
+  });
+  test('PUT rejects invalid priority', async () => {
+    const response = await request(app).put(`/api/todos/${id}`).send({ priority: 'urgent' });
+    expect(response.status).toBe(400);
+    expect(Todo.findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+  test('PUT /api/todos/:id updates completed status and validates fields', async () => {
     Todo.findByIdAndUpdate.mockResolvedValue({ ...todo, completed: true });
     const updated = await request(app).put(`/api/todos/${id}`).send({ completed: true });
     expect(updated.status).toBe(200);

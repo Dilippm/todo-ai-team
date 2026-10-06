@@ -34,12 +34,49 @@ describe('QA scenarios', () => {
     expect(response.status).toBe(500);
     expect(response.body).toEqual({ error: 'Internal server error' });
   });
-  test('GET returns multiple Todo records', async () => {
+  test('POST creates a Todo without priority using the default', async () => {
+    Todo.create.mockResolvedValue(first);
+    const response = await request(app).post('/api/todos').send({ title: 'First' });
+    expect(response.status).toBe(201);
+    expect(Todo.create).toHaveBeenCalledWith({ title: 'First' });
+    expect(response.body.priority).toBe('medium');
+  });
+  test.each(['low', 'medium', 'high'])('POST creates a Todo with %s priority', async (priority) => {
+    Todo.create.mockResolvedValue({ ...first, priority });
+    const response = await request(app).post('/api/todos').send({ title: 'First', priority });
+    expect(response.status).toBe(201);
+    expect(Todo.create).toHaveBeenCalledWith({ title: 'First', priority });
+    expect(response.body.priority).toBe(priority);
+  });
+  test('POST rejects an invalid priority', async () => {
+    const response = await request(app).post('/api/todos').send({ title: 'First', priority: 'urgent' });
+    expect(response.status).toBe(400);
+    expect(Todo.create).not.toHaveBeenCalled();
+  });
+  test('GET returns multiple Todo records with priority, including legacy records', async () => {
     Todo.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([first, second]) });
     const response = await request(app).get('/api/todos');
     expect(response.status).toBe(200);
     expect(response.body).toHaveLength(2);
-    expect(response.body).toEqual([first, second]);
+    expect(response.body).toEqual([{ ...first, priority: 'medium' }, { ...second, priority: 'medium' }]);
+  });
+  test('GET returns an existing Todo without priority with the default', async () => {
+    Todo.findById.mockResolvedValue(first);
+    const response = await request(app).get(`/api/todos/${id}`);
+    expect(response.status).toBe(200);
+    expect(response.body.priority).toBe('medium');
+  });
+  test('PUT updates Todo priority', async () => {
+    Todo.findByIdAndUpdate.mockResolvedValue({ ...first, priority: 'high' });
+    const response = await request(app).put(`/api/todos/${id}`).send({ priority: 'high' });
+    expect(response.status).toBe(200);
+    expect(response.body.priority).toBe('high');
+    expect(Todo.findByIdAndUpdate).toHaveBeenCalledWith(id, { priority: 'high' }, { new: true, runValidators: true });
+  });
+  test('PUT rejects an invalid priority', async () => {
+    const response = await request(app).put(`/api/todos/${id}`).send({ priority: 'urgent' });
+    expect(response.status).toBe(400);
+    expect(Todo.findByIdAndUpdate).not.toHaveBeenCalled();
   });
   test('PUT updates completed status', async () => {
     Todo.findByIdAndUpdate.mockResolvedValue({ ...first, completed: true });

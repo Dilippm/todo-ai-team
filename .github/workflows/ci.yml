@@ -16,15 +16,28 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
 
-      - name: Run automated tests
+      - name: Run backend tests
         working-directory: backend
         run: npm test
 
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Build backend Docker image
         run: docker build --tag todo-backend:ci ./backend
+
+      - name: Build frontend Docker image
+        run: docker build --tag todo-frontend:ci ./frontend
