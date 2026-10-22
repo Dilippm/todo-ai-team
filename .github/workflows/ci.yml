@@ -29,6 +29,11 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: npm test
+      
+      - name: Intentional CI failure (temporary lab)
+        run: |
+          echo "Simulating a CI failure for learning"
+          exit 1
 
       - name: Install frontend dependencies
         working-directory: frontend
