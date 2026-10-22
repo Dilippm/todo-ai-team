@@ -29,7 +29,7 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: npm test
-        
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -47,3 +47,23 @@ jobs:
 
       - name: Build frontend Docker image
         run: docker build --tag todo-frontend:ci ./frontend
+
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: todo-backend:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: todo-frontend:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

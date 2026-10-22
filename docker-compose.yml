@@ -1,6 +1,6 @@
 services:
   mongo:
-    image: mongo:8.0
+    image: mongo:7.0.41
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-todos}
