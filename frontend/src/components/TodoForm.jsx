@@ -1,19 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 const emptyForm = { title: '', description: '', priority: 'medium' };
 
 export default function TodoForm({ todo, onSubmit, onCancel, saving, error }) {
-  const [form, setForm] = useState(emptyForm);
-  const [validationError, setValidationError] = useState('');
+  const [form, setForm] = useState(() =>
+    todo
+      ? {
+          title: todo.title || '',
+          description: todo.description || '',
+          priority: todo.priority || 'medium',
+        }
+      : emptyForm
+  );
 
-  useEffect(() => {
-    setForm(todo ? {
-      title: todo.title || '',
-      description: todo.description || '',
-      priority: todo.priority || 'medium',
-    } : emptyForm);
-    setValidationError('');
-  }, [todo]);
+  const [validationError, setValidationError] = useState('');
 
   function change(event) {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));

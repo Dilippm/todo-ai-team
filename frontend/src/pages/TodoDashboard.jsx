@@ -16,11 +16,10 @@ export default function TodoDashboard() {
   const [saving, setSaving] = useState(false);
 
   const loadTodos = useCallback(async () => {
-    setLoading(true);
-    setLoadError('');
     try {
       const data = await getTodos();
       setTodos(Array.isArray(data) ? data : []);
+      setLoadError('');
     } catch (error) {
       setLoadError(getApiError(error));
     } finally {
@@ -28,7 +27,26 @@ export default function TodoDashboard() {
     }
   }, []);
 
-  useEffect(() => { loadTodos(); }, [loadTodos]);
+  useEffect(() => {
+    let active = true;
+
+    async function loadInitialTodos() {
+      try {
+        const data = await getTodos();
+        if (active) {
+          setTodos(Array.isArray(data) ? data : []);
+          setLoadError('');
+        }
+      } catch (error) {
+        if (active) setLoadError(getApiError(error));
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadInitialTodos();
+    return () => { active = false; };
+  }, []);
 
   const openTodos = useMemo(() => todos.filter((todo) => !todo.completed), [todos]);
   const completedTodos = useMemo(() => todos.filter((todo) => todo.completed), [todos]);
@@ -68,7 +86,6 @@ export default function TodoDashboard() {
       await loadTodos();
     } catch (error) {
       setActionError(getApiError(error));
-    } finally {
     }
   }
 
@@ -80,7 +97,6 @@ export default function TodoDashboard() {
       setTodos((current) => current.filter((item) => (item._id || item.id) !== id));
     } catch (error) {
       setActionError(getApiError(error));
-    } finally {
     }
   }
 
@@ -175,7 +191,18 @@ export default function TodoDashboard() {
         <footer className="page-footer"><span>DAYMARK <span className="brand-period">●</span></span><span>A little progress is still progress.</span></footer>
       </main>
 
-      {formOpen && <TodoForm todo={formTodo} onSubmit={saveTodo} onCancel={() => { setFormOpen(false); setFormTodo(null); }} saving={saving} error={actionError} />}
-    </div>
+{formOpen && (
+  <TodoForm
+    key={formTodo ? (formTodo._id || formTodo.id) : 'new'}
+    todo={formTodo}
+    onSubmit={saveTodo}
+    onCancel={() => {
+      setFormOpen(false);
+      setFormTodo(null);
+    }}
+    saving={saving}
+    error={actionError}
+  />
+)}    </div>
   );
 }

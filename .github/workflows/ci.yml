@@ -3,7 +3,9 @@ name: CI
 on:
   push:
   pull_request:
-
+# grant only the permissions this workflow currently needs.
+permissions:
+  contents: read
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
@@ -31,6 +33,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
       - name: Build frontend
         working-directory: frontend

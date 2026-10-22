@@ -6,7 +6,6 @@ function formatDate(value) {
 }
 
 export default function TodoItem({ todo, onToggle, onPriorityChange, onEdit, onDelete }) {
-  const id = todo._id || todo.id;
   const priority = todo.priority || 'medium';
   return (
     <article className={`todo-item${todo.completed ? ' is-complete' : ''}`}>
