@@ -145,3 +145,88 @@ jobs:
 
           docker push "$REGISTRY/todo-frontend:$VERSION"
           docker push "$REGISTRY/todo-frontend:$SHA"
+
+
+
+  deploy-local-kind:
+    name: Deploy release to local kind
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: publish
+    runs-on: [self-hosted, Linux, X64]
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ap-south-1
+      ECR_REGISTRY: 484907528737.dkr.ecr.ap-south-1.amazonaws.com
+
+    steps:
+      - name: Check out release
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::484907528737:role/todo-ai-team-github-actions-ecr-publish
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create or refresh ECR pull secret
+        shell: bash
+        env:
+          REGISTRY: ${{ env.ECR_REGISTRY }}
+        run: |
+          set -euo pipefail
+
+          kubectl --context kind-devops-lab create namespace todo \
+            --dry-run=client -o yaml |
+            kubectl --context kind-devops-lab apply -f -
+
+          DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker --config "$DOCKER_CONFIG" login \
+              --username AWS --password-stdin "$REGISTRY"
+
+          kubectl --context kind-devops-lab \
+            create secret generic ecr-pull-secret \
+            --namespace todo \
+            --type=kubernetes.io/dockerconfigjson \
+            --from-file=.dockerconfigjson="$DOCKER_CONFIG/config.json" \
+            --dry-run=client -o yaml |
+            kubectl --context kind-devops-lab apply -f -
+
+      - name: Set release image versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$GITHUB_REF_NAME"
+
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid release tag: $VERSION"
+            exit 1
+          fi
+
+          sed -i "s|todo-backend:[^[:space:]]*|todo-backend:${VERSION}|" k8s/backend.yaml
+          sed -i "s|todo-frontend:[^[:space:]]*|todo-frontend:${VERSION}|" k8s/frontend.yaml
+
+          grep -n 'image:' k8s/backend.yaml k8s/frontend.yaml
+
+      - name: Apply Kubernetes manifests
+        run: kubectl --context kind-devops-lab apply -f k8s/
+
+      - name: Verify MongoDB rollout
+        run: kubectl --context kind-devops-lab rollout status deployment/mongo -n todo --timeout=180s
+
+      - name: Verify backend rollout
+        run: kubectl --context kind-devops-lab rollout status deployment/backend -n todo --timeout=180s
+
+      - name: Verify frontend rollout
+        run: kubectl --context kind-devops-lab rollout status deployment/frontend -n todo --timeout=180s
+
+      - name: Show deployment status
+        run: |
+          kubectl --context kind-devops-lab get pods -n todo -o wide
+          kubectl --context kind-devops-lab get services -n todo

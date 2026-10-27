@@ -13,9 +13,11 @@ spec:
       labels:
         app: frontend
     spec:
+      imagePullSecrets:
+        - name: ecr-pull-secret
       containers:
         - name: frontend
-          image: 484907528737.dkr.ecr.eu-north-1.amazonaws.com/todo-frontend:v1
+          image: 484907528737.dkr.ecr.ap-south-1.amazonaws.com/todo-frontend:v1.0.0
           ports:
             - containerPort: 80
           readinessProbe:
