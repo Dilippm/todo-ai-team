@@ -4,15 +4,20 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*.*.*'
   pull_request:
     branches:
       - main
-# grant only the permissions this workflow currently needs.
+
 permissions:
   contents: read
+
 jobs:
   test-and-build:
+    name: Test, build and scan
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -46,6 +51,20 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Validate release version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="$GITHUB_REF_NAME"
+
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid release version: $VERSION"
+            echo "Expected format: vMAJOR.MINOR.PATCH (example: v1.0.0)"
+            exit 1
+          fi
+
+          echo "Validated release version: $VERSION"
+
       - name: Build backend Docker image
         run: docker build --tag todo-backend:ci ./backend
 
@@ -72,10 +91,9 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-
   publish:
-    name: Publish images to Amazon ECR
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Publish versioned images to Amazon ECR
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: test-and-build
     runs-on: ubuntu-latest
 
@@ -85,7 +103,6 @@ jobs:
 
     env:
       AWS_REGION: ap-south-1
-      
 
     steps:
       - name: Check out repository
@@ -95,24 +112,36 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::484907528737:role/todo-ai-team-github-actions-ecr-publish
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push backend image
+      - name: Build and push backend release
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
         run: |
-          docker build --tag "$REGISTRY/todo-backend:$IMAGE_TAG" ./backend
-          docker push "$REGISTRY/todo-backend:$IMAGE_TAG"
+          docker build \
+            --tag "$REGISTRY/todo-backend:$VERSION" \
+            --tag "$REGISTRY/todo-backend:$SHA" \
+            ./backend
 
-      - name: Build and push frontend image
+          docker push "$REGISTRY/todo-backend:$VERSION"
+          docker push "$REGISTRY/todo-backend:$SHA"
+
+      - name: Build and push frontend release
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
         run: |
-          docker build --tag "$REGISTRY/todo-frontend:$IMAGE_TAG" ./frontend
-          docker push "$REGISTRY/todo-frontend:$IMAGE_TAG"
+          docker build \
+            --tag "$REGISTRY/todo-frontend:$VERSION" \
+            --tag "$REGISTRY/todo-frontend:$SHA" \
+            ./frontend
+
+          docker push "$REGISTRY/todo-frontend:$VERSION"
+          docker push "$REGISTRY/todo-frontend:$SHA"
