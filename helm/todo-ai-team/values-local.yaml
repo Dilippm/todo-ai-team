@@ -12,6 +12,8 @@ frontend:
     tag: "v2"
     pullPolicy: IfNotPresent
   imagePullSecrets: []
+  service:
+    type: ClusterIP
 
 mongo:
   image:
