@@ -9,7 +9,7 @@ backend:
 frontend:
   image:
     repository: todo-frontend
-    tag: "v1"
+    tag: "v2"
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 
