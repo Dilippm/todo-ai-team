@@ -1,5 +1,6 @@
 
 backend:
+  replicaCount: 2
   image:
     repository: todo-backend
     tag: "v1"
