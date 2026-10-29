@@ -1,0 +1,20 @@
+
+backend:
+  image:
+    repository: todo-backend
+    tag: "v1"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+frontend:
+  image:
+    repository: todo-frontend
+    tag: "v1"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+mongo:
+  image:
+    repository: mongo
+    tag: "8.0.4"
+    pullPolicy: IfNotPresent

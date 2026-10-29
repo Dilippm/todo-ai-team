@@ -1,0 +1,63 @@
+backend:
+  replicaCount: 1
+  image:
+    repository: 484907528737.dkr.ecr.ap-south-1.amazonaws.com/todo-backend
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+  containerPort: 3000
+  imagePullSecrets:
+    - name: ecr-pull-secret
+  env:
+    nodeEnv: production
+    port: "3000"
+    mongodbUri: mongodb://dev-mongo:27017/todos
+  probes:
+    readiness:
+      path: /api/todos
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    liveness:
+      path: /api/todos
+      initialDelaySeconds: 20
+      periodSeconds: 20
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: 484907528737.dkr.ecr.ap-south-1.amazonaws.com/todo-frontend
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 80
+  containerPort: 80
+  imagePullSecrets:
+    - name: ecr-pull-secret
+  probes:
+    readiness:
+      path: /
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    liveness:
+      path: /
+      initialDelaySeconds: 15
+      periodSeconds: 20
+
+mongo:
+  replicaCount: 1
+  image:
+    repository: mongo
+    tag: "8.0.4"
+    pullPolicy: IfNotPresent
+  service:
+    port: 27017
+    targetPort: 27017
+  containerPort: 27017
+  database: todos
+  persistence:
+    enabled: false
