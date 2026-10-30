@@ -1,7 +1,10 @@
+
 name: CI
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   pull_request:
@@ -57,7 +60,6 @@ jobs:
 
           if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Invalid release version: $VERSION"
-            echo "Expected format: vMAJOR.MINOR.PATCH (example: v1.0.0)"
             exit 1
           fi
 
@@ -89,6 +91,24 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
+      # Preserve the exact images that passed Trivy.
+      # This only runs for release-tag events.
+      - name: Save scanned release images
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          docker save \
+            todo-backend:ci \
+            todo-frontend:ci \
+            -o todo-images.tar
+
+      - name: Upload scanned release images
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanned-docker-images
+          path: todo-images.tar
+          retention-days: 1
+
   publish:
     name: Publish versioned images to Amazon ECR
     if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -102,9 +122,20 @@ jobs:
     env:
       AWS_REGION: ap-south-1
 
+    outputs:
+      backend_digest: ${{ steps.image-digests.outputs.backend_digest }}
+      frontend_digest: ${{ steps.image-digests.outputs.frontend_digest }}
+
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      # Download the exact images scanned in the previous job.
+      - name: Download scanned Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: scanned-docker-images
+          path: .
+
+      - name: Load scanned Docker images
+        run: docker load --input todo-images.tar
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -116,115 +147,207 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push backend release
+      - name: Tag and push backend release
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           VERSION: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
         run: |
-          docker build \
-            --tag "$REGISTRY/todo-backend:$VERSION" \
-            --tag "$REGISTRY/todo-backend:$SHA" \
-            ./backend
+          set -euo pipefail
+
+          docker tag todo-backend:ci "$REGISTRY/todo-backend:$VERSION"
+          docker tag todo-backend:ci "$REGISTRY/todo-backend:$SHA"
 
           docker push "$REGISTRY/todo-backend:$VERSION"
           docker push "$REGISTRY/todo-backend:$SHA"
 
-      - name: Build and push frontend release
+      - name: Tag and push frontend release
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           VERSION: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
         run: |
-          docker build \
-            --tag "$REGISTRY/todo-frontend:$VERSION" \
-            --tag "$REGISTRY/todo-frontend:$SHA" \
-            ./frontend
+          set -euo pipefail
+
+          docker tag todo-frontend:ci "$REGISTRY/todo-frontend:$VERSION"
+          docker tag todo-frontend:ci "$REGISTRY/todo-frontend:$SHA"
 
           docker push "$REGISTRY/todo-frontend:$VERSION"
           docker push "$REGISTRY/todo-frontend:$SHA"
 
+      - name: Retrieve immutable image digests
+        id: image-digests
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
 
+          BACKEND_DIGEST=$(aws ecr describe-images \
+            --repository-name todo-backend \
+            --image-ids imageTag="$VERSION" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
 
-  deploy-local-kind:
-    name: Deploy release to local kind
+          FRONTEND_DIGEST=$(aws ecr describe-images \
+            --repository-name todo-frontend \
+            --image-ids imageTag="$VERSION" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "Backend digest: $BACKEND_DIGEST"
+          echo "Frontend digest: $FRONTEND_DIGEST"
+
+          [[ "$BACKEND_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$FRONTEND_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          echo "backend_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+
+  update-gitops:
+    name: Update Helm desired state with ECR digests
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: publish
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
 
     permissions:
-      contents: read
-      id-token: write
+      contents: write
 
     env:
-      AWS_REGION: ap-south-1
-      ECR_REGISTRY: 484907528737.dkr.ecr.ap-south-1.amazonaws.com
+      BACKEND_DIGEST: ${{ needs.publish.outputs.backend_digest }}
+      FRONTEND_DIGEST: ${{ needs.publish.outputs.frontend_digest }}
 
     steps:
-      - name: Check out release
+      - name: Check out main branch
         uses: actions/checkout@v4
-
-      - name: Configure AWS credentials using OIDC
-        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::484907528737:role/todo-ai-team-github-actions-ecr-publish
-          aws-region: ${{ env.AWS_REGION }}
+          ref: main
+          fetch-depth: 0
 
-      - name: Create or refresh ECR pull secret
-        shell: bash
-        env:
-          REGISTRY: ${{ env.ECR_REGISTRY }}
-        run: |
-          set -euo pipefail
-
-          kubectl --context kind-devops-lab create namespace todo \
-            --dry-run=client -o yaml |
-            kubectl --context kind-devops-lab apply -f -
-
-          DOCKER_CONFIG="$(mktemp -d)"
-          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-
-          aws ecr get-login-password --region "$AWS_REGION" |
-            docker --config "$DOCKER_CONFIG" login \
-              --username AWS --password-stdin "$REGISTRY"
-
-          kubectl --context kind-devops-lab \
-            create secret generic ecr-pull-secret \
-            --namespace todo \
-            --type=kubernetes.io/dockerconfigjson \
-            --from-file=.dockerconfigjson="$DOCKER_CONFIG/config.json" \
-            --dry-run=client -o yaml |
-            kubectl --context kind-devops-lab apply -f -
-
-      - name: Set release image versions
+      # A release must originate from a commit already merged into main.
+      - name: Verify release commit belongs to main
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$GITHUB_REF_NAME"
 
-          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Invalid release tag: $VERSION"
+          git fetch origin main --tags
+
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release commit is not contained in main."
             exit 1
           fi
 
-          sed -i "s|todo-backend:[^[:space:]]*|todo-backend:${VERSION}|" k8s/backend.yaml
-          sed -i "s|todo-frontend:[^[:space:]]*|todo-frontend:${VERSION}|" k8s/frontend.yaml
+          echo "Release commit is contained in main."
 
-          grep -n 'image:' k8s/backend.yaml k8s/frontend.yaml
-
-      - name: Apply Kubernetes manifests
-        run: kubectl --context kind-devops-lab apply -f k8s/
-
-      - name: Verify MongoDB rollout
-        run: kubectl --context kind-devops-lab rollout status deployment/mongo -n todo --timeout=180s
-
-      - name: Verify backend rollout
-        run: kubectl --context kind-devops-lab rollout status deployment/backend -n todo --timeout=180s
-
-      - name: Verify frontend rollout
-        run: kubectl --context kind-devops-lab rollout status deployment/frontend -n todo --timeout=180s
-
-      - name: Show deployment status
+      - name: Update Helm image digests
+        shell: bash
         run: |
-          kubectl --context kind-devops-lab get pods -n todo -o wide
-          kubectl --context kind-devops-lab get services -n todo
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("helm/todo-ai-team/values.yaml")
+          lines = path.read_text().splitlines()
+
+          digests = {
+              "backend": os.environ["BACKEND_DIGEST"],
+              "frontend": os.environ["FRONTEND_DIGEST"],
+          }
+
+          for name, digest in digests.items():
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"Invalid {name} digest: {digest}")
+
+              section_index = next(
+                  (i for i, line in enumerate(lines) if line == f"{name}:"),
+                  None
+              )
+
+              if section_index is None:
+                  raise SystemExit(f"Missing {name}: section in values.yaml")
+
+              section_end = next(
+                  (
+                      i for i in range(section_index + 1, len(lines))
+                      if lines[i] and not lines[i][0].isspace()
+                  ),
+                  len(lines)
+              )
+
+              image_index = next(
+                  (
+                      i for i in range(section_index + 1, section_end)
+                      if lines[i] == "  image:"
+                  ),
+                  None
+              )
+
+              if image_index is None:
+                  raise SystemExit(f"Missing {name}.image section")
+
+              image_end = next(
+                  (
+                      i for i in range(image_index + 1, section_end)
+                      if lines[i].startswith("  ")
+                      and not lines[i].startswith("    ")
+                  ),
+                  section_end
+              )
+
+              digest_line = next(
+                  (
+                      i for i in range(image_index + 1, image_end)
+                      if lines[i].startswith("    digest:")
+                  ),
+                  None
+              )
+
+              if digest_line is not None:
+                  lines[digest_line] = f'    digest: "{digest}"'
+              else:
+                  tag_line = next(
+                      (
+                          i for i in range(image_index + 1, image_end)
+                          if lines[i].startswith("    tag:")
+                      ),
+                      None
+                  )
+
+                  if tag_line is None:
+                      raise SystemExit(f"Missing {name}.image.tag")
+
+                  lines.insert(tag_line + 1, f'    digest: "{digest}"')
+
+          path.write_text("\n".join(lines) + "\n")
+          print(path.read_text())
+          PY
+
+      - name: Validate Helm chart
+        run: |
+          helm lint helm/todo-ai-team
+          helm template todo-release helm/todo-ai-team
+
+      - name: Commit updated desired state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --check
+          git diff -- helm/todo-ai-team/values.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- helm/todo-ai-team/values.yaml; then
+            echo "No Helm values changes to commit."
+            exit 0
+          fi
+
+          git add helm/todo-ai-team/values.yaml
+
+          git commit -m "gitops: update images to ${GITHUB_REF_NAME}"
+
+          git pull --rebase origin main
+          git push origin HEAD:main

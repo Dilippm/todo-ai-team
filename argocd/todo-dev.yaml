@@ -13,7 +13,7 @@ spec:
     path: helm/todo-ai-team
     helm:
       valueFiles:
-        - values-local.yaml
+        - values.yaml
 
   destination:
     server: https://kubernetes.default.svc
