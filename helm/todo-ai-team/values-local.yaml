@@ -3,7 +3,7 @@ backend:
   replicaCount: 2
   image:
     repository: todo-backend
-    tag: "v1"
+    tag: "v-does-not-exist-lab"
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 
