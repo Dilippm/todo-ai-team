@@ -3,7 +3,7 @@ backend:
   image:
     repository: 484907528737.dkr.ecr.ap-south-1.amazonaws.com/todo-backend
     tag: "v1.0.0"
-    digest: ""
+    digest: "sha256:0431fa4501c5c2fc70d428527b0c57dcd7175e9114b0217d1bf71c04133c85ff"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -31,7 +31,7 @@ frontend:
   image:
     repository: 484907528737.dkr.ecr.ap-south-1.amazonaws.com/todo-frontend
     tag: "v1.0.0"
-    digest: ""
+    digest: "sha256:adda988f5579b5cc2b7f5813e723fe0102be8f522d91137a1980f0aa8d6b624a"
     pullPolicy: IfNotPresent
   service:
     type: LoadBalancer
